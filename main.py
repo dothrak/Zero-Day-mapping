@@ -1,6 +1,6 @@
 import psycopg2
 from pathlib import Path
-from etl import run_etl  # ton ETL refait avec la nouvelle stratégie
+from etl import run_etl
 
 DB_PARAMS = {
     "dbname": "zerodaydb",

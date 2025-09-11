@@ -1,92 +1,99 @@
 import requests
 from bs4 import BeautifulSoup
-from psycopg2.extras import Json
 from datetime import datetime
-from kev_collector import mark_exploited_with_kev
+from psycopg2.extras import Json
 
-ZERO_DAY_CZ_URL = "https://www.zero-day.cz/database/?set_filter=Y&arrFilter_pf%5BYEAR_FROM%5D=2022&arrFilter_pf%5BYEAR_TO%5D=2022&arrFilter_pf[SEARCH]="
-
-def fetch_zdcz(year_from: int, year_to: int):
-    base_url = (
+class ZDCZCollector:
+    BASE_URL = (
         "https://www.zero-day.cz/database/?set_filter=Y"
-        f"&arrFilter_pf%5BYEAR_FROM%5D={year_from}"
-        f"&arrFilter_pf%5BYEAR_TO%5D={year_to}"
         "&arrFilter_pf[SEARCH]="
     )
-    print(f"[ZDCZ] Collecte de {year_from} à {year_to}...")
 
-    r = requests.get(base_url)
-    r.raise_for_status()
-    soup = BeautifulSoup(r.text, "html.parser")
-    
-    results = []
-    issues = soup.select("#issuew_wrap .issue")  # plus de [:limit]
-    
-    for issue in issues:
-        title_tag = issue.select_one(".issue-title a")
-        cve_tag = issue.select_one(".issue-title .issue-code")
-        desc_tag = issue.select_one(".description.for-l")
-        software_tag = issue.select_one(".spec strong")
-        discovered_tag = issue.select_one(".issue-status .discavered time")
-        
-        cve_id = cve_tag.text.strip() if cve_tag else f"ZDAYCZ-{hash(title_tag.text) % 10000}"
-        title = title_tag.text.strip() if title_tag else "No title"
-        summary = desc_tag.text.strip() if desc_tag else ""
-        software = software_tag.text.strip() if software_tag else ""
-        discovered = datetime.strptime(discovered_tag.text.strip(), "%Y-%m-%d") if discovered_tag else None
-        
-        results.append({
-            "cve_id": cve_id,
-            "title": title,
-            "summary": summary,
-            "vendors_products": [{"product": software}] if software else [],
-            "first_seen": discovered,
-            "disclosed": discovered,
-            "refs": [{"source": "Zero-day.cz", "url": title_tag["href"]}] if title_tag else [],
-            "tags": ["Zero-day.cz"]
-        })
-    return results
+    def __init__(self, year_from: int, year_to: int):
+        self.year_from = year_from
+        self.year_to = year_to
+        self.vulnerabilities = []
 
+    def fetch(self):
+        url = (
+            f"{self.BASE_URL}"
+            f"&arrFilter_pf%5BYEAR_FROM%5D={self.year_from}"
+            f"&arrFilter_pf%5BYEAR_TO%5D={self.year_to}"
+        )
+        print(f"[ZDCZ] Collecte de {self.year_from} à {self.year_to}...")
+        r = requests.get(url)
+        r.raise_for_status()
+        soup = BeautifulSoup(r.text, "html.parser")
+        issues = soup.select("#issuew_wrap .issue")
+        for issue in issues:
+            title_tag = issue.select_one(".issue-title a")
+            cve_tag = issue.select_one(".issue-title .issue-code")
+            desc_tag = issue.select_one(".description.for-l")
+            software_tag = issue.select_one(".spec strong")
+            discovered_tag = issue.select_one(".issue-status .discavered time")
 
-def upsert_zero_day_cz(cur, kev_cves=None, zdi_cves=None):
-    kev_cves = kev_cves or {}
-    zdi_cves = zdi_cves or []
+            cve_id = cve_tag.text.strip() if cve_tag else f"ZDAYCZ-{hash(title_tag.text) % 10000}"
+            title = title_tag.text.strip() if title_tag else "No title"
+            summary = desc_tag.text.strip() if desc_tag else ""
+            software = software_tag.text.strip() if software_tag else ""
+            discovered = datetime.strptime(discovered_tag.text.strip(), "%Y-%m-%d") if discovered_tag else None
 
-    vulns = fetch_zdcz()
-    for v in vulns:
-        # Marquer KEV
-        v = mark_exploited_with_kev(v, kev_cves)
-        # Marquer ZDI si correspondance
-        if v["cve_id"] in zdi_cves:
-            v["exploited_in_wild"] = True
-            v["refs"].append({"source": "ZDI", "url": f"https://www.zerodayinitiative.com/advisories/{v['cve_id']}"})
+            self.vulnerabilities.append({
+                "cve_id": cve_id,
+                "title": title,
+                "summary": summary,
+                "vendors_products": [{"product": software}] if software else [],
+                "first_seen": discovered,
+                "disclosed": discovered,
+                "refs": [{"source": "Zero-day.cz", "url": title_tag["href"]}] if title_tag else [],
+                "tags": ["Zero-day.cz"]
+            })
+        return self.vulnerabilities
 
-        cur.execute("""
-            INSERT INTO vulnerabilities (canonical_id, title, summary, vendors_products, first_seen, disclosed, cve_id, exploited_in_wild, refs, tags)
-            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-            ON CONFLICT (canonical_id) DO UPDATE SET
-                title=EXCLUDED.title,
-                summary=EXCLUDED.summary,
-                vendors_products=EXCLUDED.vendors_products,
-                first_seen=EXCLUDED.first_seen,
-                disclosed=EXCLUDED.disclosed,
-                cve_id=EXCLUDED.cve_id,
-                exploited_in_wild=EXCLUDED.exploited_in_wild,
-                refs=EXCLUDED.refs,
-                tags=EXCLUDED.tags,
-                updated_at=NOW()
-            RETURNING vuln_id
-        """, (
-            v["cve_id"],
-            v.get("title"),
-            v.get("summary"),
-            Json(v.get("vendors_products", [])),
-            v.get("first_seen"),
-            v.get("disclosed"),
-            v.get("cve_id"),
-            v.get("exploited_in_wild", False),
-            Json(v.get("refs", [])),
-            v.get("tags", [])
-        ))
-        vuln_id = cur.fetchone()[0]
-        print(f"[Zero-day.cz] {v['cve_id']} inséré/mis à jour (id {vuln_id})")
+    def upsert(self, cur, kev_cves=None, zdi_cves=None):
+        kev_cves = kev_cves or {}
+        zdi_cves = zdi_cves or []
+        for v in self.vulnerabilities:
+            if v.get("cve_id") in zdi_cves:
+                v.setdefault("refs", []).append({
+                    "source": "ZDI",
+                    "url": f"https://www.zerodayinitiative.com/advisories/{v['cve_id']}"
+                })
+            cur.execute("""
+                INSERT INTO vulnerabilities (
+                    canonical_id, title, summary, vendors_products,
+                    first_seen, disclosed, cve_id,
+                    exploited_in_wild, kev_added, kev_latency_days,
+                    cvss2_base_score, cvss2_vector,
+                    cvss3_base_score, cvss3_vector,
+                    cvss4_base_score, cvss4_vector,
+                    refs, tags
+                )
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                ON CONFLICT (canonical_id) DO UPDATE SET
+                    refs=EXCLUDED.refs,
+                    tags=EXCLUDED.tags,
+                    updated_at=NOW()
+                RETURNING vuln_id
+            """, (
+                v["cve_id"],
+                v.get("title"),
+                v.get("summary"),
+                Json(v.get("vendors_products", [])),
+                v.get("first_seen"),
+                v.get("disclosed"),
+                v.get("cve_id"),
+                v.get("exploited_in_wild", False),
+                v.get("kev_added"),
+                v.get("kev_latency_days"),
+                v.get("cvss2_base_score"),
+                v.get("cvss2_vector"),
+                v.get("cvss3_base_score"),
+                v.get("cvss3_vector"),
+                v.get("cvss4_base_score"),
+                v.get("cvss4_vector"),
+                Json(v.get("refs", [])),
+                v.get("tags", [])
+            ))
+            vuln_id = cur.fetchone()[0]
+            print(f"[Zero-day.cz] {v['cve_id']} inséré/mis à jour (id {vuln_id})")
