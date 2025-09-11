@@ -1,4 +1,3 @@
-# etl.py
 import psycopg2
 from collections import defaultdict
 from nvd_collector import NVDEnricher
