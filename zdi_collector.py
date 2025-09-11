@@ -4,32 +4,41 @@ from datetime import datetime
 from psycopg2.extras import Json
 from kev_collector import mark_exploited_with_kev
 
-ZDI_2025_URL = "https://www.zerodayinitiative.com/advisories/published/2025/"
+ZDI_2025_URL = "https://www.zerodayinitiative.com/advisories/published/2022/"
 
-def fetch_zdi(limit=5):
-    """
-    Récupère les vulnérabilités ZDI pour l'année 2025.
-    Limit : nombre de vulnérabilités à récupérer pour tests.
-    """
-    r = requests.get(ZDI_2025_URL, timeout=15)
-    r.raise_for_status()
-    soup = BeautifulSoup(r.text, "html.parser")
-    
+def fetch_zdi(year_from: int, year_to: int):
+    for year in range(year_from, year_to + 1):
+        url = f"https://www.zerodayinitiative.com/advisories/published/{year}/"
+        print(f"[ZDI] Collecte {year} ...")
+
+        r = requests.get(url)
+        r.raise_for_status()
+        soup = BeautifulSoup(r.text, "html.parser")
+
     results = []
-    advisories = soup.select(".advisory")[:limit]  # On prend les N premières vulnérabilités
-    for adv in advisories:
-        cve_tag = adv.select_one(".advisory-title a")
-        cve_id = cve_tag.text.strip() if cve_tag else f"ZDI-{hash(adv.text) % 10000}"
-        link = cve_tag["href"] if cve_tag else ""
-        title = adv.select_one(".advisory-title").text.strip() if adv.select_one(".advisory-title") else "No title"
-        date_tag = adv.select_one(".advisory-date")
-        disclosed = datetime.strptime(date_tag.text.strip(), "%B %d, %Y") if date_tag else None
-        
+    advisories = soup.select("tr#publishedAdvisories")  # plus de slicing [:limit]
+
+    for row in advisories:
+        cols = row.find_all("td")
+        if len(cols) < 8:
+            continue
+
+        zdi_id = cols[0].text.strip()
+        zdi_can = cols[1].text.strip()
+        vendor = cols[2].text.strip()
+        cve_id = cols[3].text.strip() or zdi_id  # fallback au ZDI ID s'il n'y a pas de CVE
+        cvss = cols[4].text.strip()
+        disclosed = datetime.strptime(cols[5].text.strip(), "%Y-%m-%d") if cols[5].text.strip() else None
+        updated = datetime.strptime(cols[6].text.strip(), "%Y-%m-%d") if cols[6].text.strip() else None
+        link_tag = cols[7].find("a")
+        title = link_tag.text.strip() if link_tag else "No title"
+        link = f"https://www.zerodayinitiative.com{link_tag['href']}" if link_tag else ""
+
         results.append({
             "cve_id": cve_id,
             "title": title,
-            "summary": f"Publié sur ZDI {disclosed.date() if disclosed else ''}",
-            "vendors_products": [],
+            "summary": f"Publié sur ZDI le {disclosed.date() if disclosed else ''}",
+            "vendors_products": [vendor] if vendor else [],
             "first_seen": disclosed,
             "disclosed": disclosed,
             "refs": [{"source": "ZDI", "url": link}] if link else [],
@@ -37,21 +46,26 @@ def fetch_zdi(limit=5):
         })
     return results
 
-def fetch_zdi_cves(limit=5):
-    vulns = fetch_zdi(limit)
+
+def fetch_zdi_cves():
+    vulns = fetch_zdi()
     return [v["cve_id"] for v in vulns]
 
-def upsert_zdi_vulns(cur, kev_cves=None, zdcz_cves=None, limit=5):
+
+def upsert_zdi(cur, kev_cves=None, zdcz_cves=None):
     kev_cves = kev_cves or {}
     zdcz_cves = zdcz_cves or []
 
-    vulns = fetch_zdi(limit)
+    vulns = fetch_zdi()
     for v in vulns:
         # Marquer KEV et Zero-day.cz
         v = mark_exploited_with_kev(v, kev_cves)
         if v["cve_id"] in zdcz_cves:
             v["exploited_in_wild"] = True
-            v["refs"].append({"source": "Zero-day.cz", "url": f"https://www.zero-day.cz/cve/{v['cve_id']}"})
+            v["refs"].append({
+                "source": "Zero-day.cz",
+                "url": f"https://www.zero-day.cz/cve/{v['cve_id']}"
+            })
         
         # Insertion / upsert
         cur.execute("""

@@ -1,0 +1,17 @@
+version: '3.9'
+
+services:
+  testdb:
+    image: postgres:15
+    container_name: zerodaydb_test
+    environment:
+      POSTGRES_USER: testuser
+      POSTGRES_PASSWORD: testpass
+      POSTGRES_DB: zerodaydb_test
+    ports:
+      - "5433:5432"  # On ne met pas en conflit avec ton DB principale
+    volumes:
+      - zerodaydb_test_data:/var/lib/postgresql/data
+
+volumes:
+  zerodaydb_test_data:

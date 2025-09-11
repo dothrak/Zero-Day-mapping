@@ -1,19 +1,31 @@
+DROP TABLE IF EXISTS source_mappings;
+DROP TABLE IF EXISTS vulnerabilities CASCADE;
+
 -- Table principale des vulnérabilités
-CREATE TABLE vulnerabilities (
+CREATE TABLE IF NOT EXISTS vulnerabilities (
     vuln_id SERIAL PRIMARY KEY,
-    canonical_id TEXT UNIQUE,             -- ex: CVE-2022-1234 ou interne
+    canonical_id TEXT UNIQUE NOT NULL,
+    cve_id TEXT,
     title TEXT,
     summary TEXT,
-    vendors_products JSONB,               -- [{"vendor":"X","product":"Y","version":"Z"}]
+    vendors_products JSONB,
     first_seen TIMESTAMP,
     disclosed TIMESTAMP,
-    cve_id TEXT,
-    cvss JSONB,                           -- {"baseScore":7.8,"vector":"AV:N/AC:L/..."}
-    exploited_in_wild BOOLEAN DEFAULT false,
-    refs JSONB,                           -- [{"source":"NVD","url":"..."}]
+    published_nvd TIMESTAMP,
+    exploited_in_wild BOOLEAN DEFAULT FALSE,
+    kev_added TIMESTAMP,
+    kev_latency_days INT,
+    cvss2_base_score FLOAT,
+    cvss2_vector TEXT,
+    cvss3_base_score FLOAT,
+    cvss3_vector TEXT,
+    cvss4_base_score FLOAT,
+    cvss4_vector TEXT,
+    epss_score FLOAT,
+    epss_percentile FLOAT,
+    refs JSONB,
     tags TEXT[],
-    created_at TIMESTAMP DEFAULT now(),
-    updated_at TIMESTAMP DEFAULT now()
+    updated_at TIMESTAMP DEFAULT NOW()
 );
 
 -- Table pour mapper les sources

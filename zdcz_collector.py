@@ -4,15 +4,23 @@ from psycopg2.extras import Json
 from datetime import datetime
 from kev_collector import mark_exploited_with_kev
 
-ZERO_DAY_CZ_URL = "https://www.zero-day.cz/database/?set_filter=Y&arrFilter_pf%5BYEAR_FROM%5D=2025&arrFilter_pf%5BYEAR_TO%5D=2025&arrFilter_pf[SEARCH]="
+ZERO_DAY_CZ_URL = "https://www.zero-day.cz/database/?set_filter=Y&arrFilter_pf%5BYEAR_FROM%5D=2022&arrFilter_pf%5BYEAR_TO%5D=2022&arrFilter_pf[SEARCH]="
 
-def fetch_zdcz(limit=5):
-    r = requests.get(ZERO_DAY_CZ_URL, timeout=15)
+def fetch_zdcz(year_from: int, year_to: int):
+    base_url = (
+        "https://www.zero-day.cz/database/?set_filter=Y"
+        f"&arrFilter_pf%5BYEAR_FROM%5D={year_from}"
+        f"&arrFilter_pf%5BYEAR_TO%5D={year_to}"
+        "&arrFilter_pf[SEARCH]="
+    )
+    print(f"[ZDCZ] Collecte de {year_from} à {year_to}...")
+
+    r = requests.get(base_url)
     r.raise_for_status()
     soup = BeautifulSoup(r.text, "html.parser")
     
     results = []
-    issues = soup.select("#issuew_wrap .issue")[:limit]
+    issues = soup.select("#issuew_wrap .issue")  # plus de [:limit]
     
     for issue in issues:
         title_tag = issue.select_one(".issue-title a")
@@ -39,11 +47,12 @@ def fetch_zdcz(limit=5):
         })
     return results
 
-def upsert_zero_day_cz(cur, kev_cves=None, zdi_cves=None, limit=5):
+
+def upsert_zero_day_cz(cur, kev_cves=None, zdi_cves=None):
     kev_cves = kev_cves or {}
     zdi_cves = zdi_cves or []
 
-    vulns = fetch_zdcz(limit)
+    vulns = fetch_zdcz()
     for v in vulns:
         # Marquer KEV
         v = mark_exploited_with_kev(v, kev_cves)
