@@ -77,6 +77,11 @@ class NVDEnricher:
                 vuln["cvss2_base_score"] = cvss2.get("baseScore")
                 vuln["cvss2_vector"] = cvss2.get("vectorString")
 
+            if "cvssMetricV30" in metrics:
+                cvss3 = metrics["cvssMetricV30"][0]["cvssData"]
+                vuln["cvss3_base_score"] = cvss3.get("baseScore")
+                vuln["cvss3_vector"] = cvss3.get("vectorString")
+                
             if "cvssMetricV31" in metrics:
                 cvss3 = metrics["cvssMetricV31"][0]["cvssData"]
                 vuln["cvss3_base_score"] = cvss3.get("baseScore")
@@ -86,6 +91,33 @@ class NVDEnricher:
                 cvss4 = metrics["cvssMetricV40"][0]["cvssData"]
                 vuln["cvss4_base_score"] = cvss4.get("baseScore")
                 vuln["cvss4_vector"] = cvss4.get("vectorString")
+
+            # Configurations
+            configurations = nvd_vuln.get("configurations", [])
+            found_cpes = []
+            vendor_products = []
+
+            for config in configurations:
+                for node in config.get("nodes", []):
+                    for match in node.get("cpeMatch", []):
+                        cpe = match.get("criteria")
+                        if cpe:
+                            found_cpes.append({
+                                "source": "NVD",
+                                "product": cpe
+                            })
+                            parts = cpe.split(":")
+                            if len(parts) >= 5:
+                                vendor_products.append({
+                                    "vendor": parts[3],
+                                    "product": parts[4]
+                                })
+
+            if found_cpes:
+                vuln["configurations"] = found_cpes
+            if vendor_products:
+                vuln["vendor_product"] = vendor_products
+
 
         except Exception as e:
             print(f"[NVD] Erreur parsing CVE {cve_id}: {e}")

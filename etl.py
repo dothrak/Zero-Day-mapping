@@ -1,5 +1,4 @@
 import psycopg2
-from collections import defaultdict
 from nvd_collector import NVDEnricher
 from kev_collector import KEVEnricher
 from zdi_collector import ZDICollector

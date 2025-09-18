@@ -42,7 +42,7 @@ class ZDCZCollector:
                 "cve_id": cve_id,
                 "title": title,
                 "summary": summary,
-                "vendors_products": [{"product": software}] if software else [],
+                "configurations": [{"source": "Zero-day.cz","product": software}] if software else [],
                 "first_seen": discovered,
                 "disclosed": discovered,
                 "refs": [{"source": "Zero-day.cz", "url": title_tag["href"]}] if title_tag else [],
@@ -50,26 +50,43 @@ class ZDCZCollector:
             })
         return self.vulnerabilities
 
-    def upsert(self, cur, kev_cves=None, zdi_cves=None):
+    def upsert(self, cur, kev_cves=None, epss_cves=None, zdi_cves=None):
         kev_cves = kev_cves or {}
+        epss_cves = epss_cves or {}
         zdi_cves = zdi_cves or []
+
         for v in self.vulnerabilities:
+            # Ajout de références croisées avec ZDI si applicable
             if v.get("cve_id") in zdi_cves:
                 v.setdefault("refs", []).append({
                     "source": "ZDI",
                     "url": f"https://www.zerodayinitiative.com/advisories/{v['cve_id']}"
                 })
+
+            # Nettoyage et suppression des doublons dans vendor_product
+            vendor_products = v.get("vendor_product", [])
+            seen = set()
+            unique_vendor_products = []
+            for vp in vendor_products:
+                key = (vp.get("vendor"), vp.get("product"))
+                if key not in seen:
+                    seen.add(key)
+                    unique_vendor_products.append(vp)
+            v["vendor_product"] = unique_vendor_products
+
+            # Exécution de l'upsert
             cur.execute("""
                 INSERT INTO vulnerabilities (
-                    canonical_id, title, summary, vendors_products,
-                    first_seen, disclosed, cve_id,
+                    canonical_id, title, summary, vendor_product, configurations,
+                    first_seen, disclosed, published_nvd, cve_id,
                     exploited_in_wild, kev_added, kev_latency_days,
                     cvss2_base_score, cvss2_vector,
                     cvss3_base_score, cvss3_vector,
-                    cvss4_base_score, cvss4_vector,
+                    cvss4_base_score, cvss4_vector, 
+                    epss_score, epss_percentile,
                     refs, tags
                 )
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                 ON CONFLICT (canonical_id) DO UPDATE SET
                     refs=EXCLUDED.refs,
                     tags=EXCLUDED.tags,
@@ -79,9 +96,11 @@ class ZDCZCollector:
                 v["cve_id"],
                 v.get("title"),
                 v.get("summary"),
-                Json(v.get("vendors_products", [])),
+                Json(v.get("vendor_product", [])),   # JSONB sans doublons
+                Json(v.get("configurations", [])),
                 v.get("first_seen"),
                 v.get("disclosed"),
+                v.get("published_nvd"),
                 v.get("cve_id"),
                 v.get("exploited_in_wild", False),
                 v.get("kev_added"),
@@ -92,8 +111,11 @@ class ZDCZCollector:
                 v.get("cvss3_vector"),
                 v.get("cvss4_base_score"),
                 v.get("cvss4_vector"),
+                v.get("epss_score"),
+                v.get("epss_percentile"),
                 Json(v.get("refs", [])),
                 v.get("tags", [])
             ))
+
             vuln_id = cur.fetchone()[0]
             print(f"[Zero-day.cz] {v['cve_id']} inséré/mis à jour (id {vuln_id})")

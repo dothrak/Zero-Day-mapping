@@ -38,26 +38,41 @@ class ZDICollector:
                 })
         return self.vulnerabilities
 
-    def upsert(self, cur, kev_cves=None, zdcz_cves=None):
+    def upsert(self, cur, kev_cves=None, epss_cves=None, zdcz_cves=None):
         kev_cves = kev_cves or {}
+        epss_cves = epss_cves or {}
         zdcz_cves = zdcz_cves or []
+
         for v in self.vulnerabilities:
             if v.get("cve_id") in zdcz_cves:
                 v.setdefault("refs", []).append({
                     "source": "Zero-day.cz",
                     "url": f"https://www.zero-day.cz/database/{v['cve_id']}"
                 })
+
+            # Nettoyage et suppression des doublons dans vendor_product
+            vendor_products = v.get("vendor_product", [])
+            seen = set()
+            unique_vendor_products = []
+            for vp in vendor_products:
+                key = (vp.get("vendor"), vp.get("product"))
+                if key not in seen:
+                    seen.add(key)
+                    unique_vendor_products.append(vp)
+            v["vendor_product"] = unique_vendor_products
+                
             cur.execute("""
                 INSERT INTO vulnerabilities (
-                    canonical_id, title, summary, vendors_products,
-                    first_seen, disclosed, cve_id,
+                    canonical_id, title, summary, vendor_product, configurations,
+                    first_seen, disclosed, published_nvd, cve_id,
                     exploited_in_wild, kev_added, kev_latency_days,
                     cvss2_base_score, cvss2_vector,
                     cvss3_base_score, cvss3_vector,
-                    cvss4_base_score, cvss4_vector,
+                    cvss4_base_score, cvss4_vector, 
+                    epss_score, epss_percentile,
                     refs, tags
                 )
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                 ON CONFLICT (canonical_id) DO UPDATE SET
                     refs=EXCLUDED.refs,
                     tags=EXCLUDED.tags,
@@ -67,9 +82,11 @@ class ZDICollector:
                 v["cve_id"],
                 v.get("title"),
                 v.get("summary"),
-                Json(v.get("vendors_products", [])),
+                Json(v.get("vendor_product", [])),
+                Json(v.get("configurations", [])),
                 v.get("first_seen"),
                 v.get("disclosed"),
+                v.get("published_nvd"),
                 v.get("cve_id"),
                 v.get("exploited_in_wild", False),
                 v.get("kev_added"),
@@ -80,6 +97,8 @@ class ZDICollector:
                 v.get("cvss3_vector"),
                 v.get("cvss4_base_score"),
                 v.get("cvss4_vector"),
+                v.get("epss_score"),
+                v.get("epss_percentile"),
                 Json(v.get("refs", [])),
                 v.get("tags", [])
             ))

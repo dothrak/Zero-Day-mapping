@@ -8,7 +8,8 @@ CREATE TABLE IF NOT EXISTS vulnerabilities (
     cve_id TEXT,
     title TEXT,
     summary TEXT,
-    vendors_products JSONB,
+    vendor_product JSONB,
+    configurations JSONB,
     first_seen TIMESTAMP,
     disclosed TIMESTAMP,
     published_nvd TIMESTAMP,
@@ -41,4 +42,4 @@ CREATE TABLE source_mappings (
 -- Index utiles
 CREATE INDEX idx_vuln_cve ON vulnerabilities(cve_id);
 CREATE INDEX idx_vuln_tags ON vulnerabilities USING gin (tags);
-CREATE INDEX idx_vuln_vendor_product ON vulnerabilities USING gin (vendors_products);
+CREATE INDEX idx_vuln_vendor_product ON vulnerabilities(vendor_product);
